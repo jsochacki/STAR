@@ -78,8 +78,9 @@ plot(20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa
 plot(20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa_output_modeled, length(tx_waveform_at_pa_output_modeled)))))))
 
 %Add AWGN
-[n0, sigma] = generate_awgn_from_EsNo(tx_waveform_at_pa_output, 0,  1000, oversampling_rate);
-rx_signal = tx_waveform_at_pa_output + n0;
+tx_waveform_at_pa_output_normalized = tx_waveform_at_pa_output ./ sqrt(oversampling_rate * ((tx_waveform_at_pa_output * tx_waveform_at_pa_output') / length(tx_waveform_at_pa_output)));
+[n0, sigma] = generate_awgn_from_EsNo(tx_waveform_at_pa_output_normalized, 0,  1000, oversampling_rate);
+rx_signal = tx_waveform_at_pa_output_normalized + n0;
 
 %Receive Filtering
 baseband_waveform = cconv(rx_signal, fliplr(filter_h));
@@ -87,6 +88,9 @@ baseband_symbols = downsample(baseband_waveform(1+((2*ringing_length)):end-((2*r
 figure(4)
 plot(baseband_symbols, 'bo')
 hold on, grid on
+
+SNR_dB_without_predistortion = Measure_SNR(baseband_symbols, symbol_stream);
+EVM_percent_without_predistortion = 100*sqrt(1/power(10,SNR_dB_without_predistortion/10));
 
 %Now solve for a single itteration of the Narendra-Gallman inversion of Hammerstein predistortion
 %Get initial LTI coefficients
@@ -134,11 +138,17 @@ figure(3)
 plot(20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa_output_pd, length(tx_signal)))))))
 
 %Add AWGN
-[n0, sigma] = generate_awgn_from_EsNo(tx_waveform_at_pa_output_pd, 0,  1000, oversampling_rate);
-rx_signal_pd = tx_waveform_at_pa_output_pd + n0;
+%Have to normailze to symbol power here before adding noise so you don't
+%ruin the mssp off the rx signal in the SNR measurement
+tx_waveform_at_pa_output_pd_normalized = tx_waveform_at_pa_output_pd ./ sqrt(oversampling_rate * ((tx_waveform_at_pa_output_pd * tx_waveform_at_pa_output_pd') / length(tx_waveform_at_pa_output_pd)));
+[n0, sigma] = generate_awgn_from_EsNo(tx_waveform_at_pa_output_pd_normalized, 0,  1000, oversampling_rate);
+rx_signal_pd = tx_waveform_at_pa_output_pd_normalized + n0;
 
 %Receive Filtering
 baseband_waveform_pd = cconv(rx_signal_pd, fliplr(filter_h));
 baseband_symbols_pd = downsample(baseband_waveform_pd(1+(2*ringing_length):end-(2*ringing_length)), oversampling_rate);
 figure(4)
 plot(baseband_symbols_pd, 'ro')
+
+SNR_dB_with_predistortion = Measure_SNR(baseband_symbols_pd, symbol_stream);
+EVM_percent_with_predistortion = 100*sqrt(1/power(10,SNR_dB_with_predistortion/10));
