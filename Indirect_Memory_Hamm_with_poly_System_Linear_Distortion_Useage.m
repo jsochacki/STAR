@@ -9,6 +9,7 @@ POLYNOMIAL_ORDER = 5;
 PREDISTORTER_BACKOFF = 1;
 CFR = 0;
 CFR_Iterations = 100;
+PAPR_Reduction = 1;
 Q = 3; %must be odd
 
 %Generate temporary PA coefficients
@@ -40,7 +41,6 @@ half_length_Q = (Q - 1) / 2;
 symbol_stream = randsrc(1, SYMBOLS_PER_SLOT, Complex_Alphabet);
 oversampled_symbol_stream = upsample(symbol_stream, oversampling_rate);
 tx_waveform = cconv(oversampled_symbol_stream, filter_h);
-base_signal_PAPR_dB = PAPR_dB(tx_waveform, []);
 
 %Set output back off and generate waveform at the output of the pa
 [REQUIRED_SIGNAL_GAIN SYSTEM_POWER_GAIN_dB] = set_memory_PA_OBO(tx_waveform, OBO_FROM_P1DB, pa_coefficients, 0.01, Q);
@@ -93,11 +93,17 @@ SNR_dB_without_predistortion = Measure_SNR(baseband_symbols, symbol_stream);
 EVM_percent_without_predistortion = 100*sqrt(1/power(10,SNR_dB_without_predistortion/10));
 
 %Now solve for a single itteration of the Narendra-Gallman inversion of Hammerstein predistortion
-%Get initial LTI coefficients
-training_signal = tx_signal;
-tx_waveform_at_pa_output_pd = tx_waveform_at_pa_output;
+if CFR
+   pre_CFR_PAPR = PAPR_dB(tx_signal, []);
+   [pd_tx_waveform_post_cfr post_CFR_PAPR] = serial_peak_cancellation(tx_signal, filter_h, pre_CFR_PAPR - PAPR_Reduction, CFR_Iterations);
+   training_signal = pd_tx_waveform_post_cfr;
+else
+   training_signal = tx_signal;
+end
+tx_waveform_at_pa_output_pd = Memory_Polynomial_Amplifier(training_signal, pa_coefficients, POLYNOMIAL_ORDER, Q);
 
-[linear_coefficients X] = Least_Squares_Linear_Solution(training_signal, tx_waveform_at_pa_output / power(10, SYSTEM_POWER_GAIN_dB/20), Q);
+%Get initial LTI coefficients
+[linear_coefficients X] = Least_Squares_Linear_Solution(training_signal, tx_waveform_at_pa_output_pd / power(10, SYSTEM_POWER_GAIN_dB/20), Q);
 linear_coefficients = fliplr(linear_coefficients);
 for n = 1:1:2
 
@@ -114,16 +120,9 @@ for n = 1:1:2
    pd_tx_waveform = cconv(pd_signal_pre_lti, linear_coefficients);
    pd_tx_waveform = pd_tx_waveform(1+(half_length_Q):end-(half_length_Q));
 
-   if CFR
-      pre_CFR_PAPR = PAPR_dB(pd_tx_waveform, []);
-      [pd_tx_waveform_post_cfr post_CFR_PAPR] = serial_peak_cancellation(pd_tx_waveform, filter_h, base_signal_PAPR_dB, CFR_Iterations);
+   tx_waveform_at_pa_output_pd = Memory_Polynomial_Amplifier(pd_tx_waveform, pa_coefficients, POLYNOMIAL_ORDER, Q);
+   training_signal = pd_tx_waveform;
 
-      tx_waveform_at_pa_output_pd = Memory_Polynomial_Amplifier(pd_tx_waveform_post_cfr, pa_coefficients, POLYNOMIAL_ORDER, Q);
-      training_signal = pd_tx_waveform_post_cfr;
-   else
-      tx_waveform_at_pa_output_pd = Memory_Polynomial_Amplifier(pd_tx_waveform, pa_coefficients, POLYNOMIAL_ORDER, Q);
-      training_signal = pd_tx_waveform;
-   end
    tx_power_at_pa_output_pd = 10*log10((tx_waveform_at_pa_output_pd*tx_waveform_at_pa_output_pd')/(length(tx_waveform_at_pa_output_pd)*50*0.001));
 end
 figure(1)
@@ -149,6 +148,7 @@ baseband_waveform_pd = cconv(rx_signal_pd, fliplr(filter_h));
 baseband_symbols_pd = downsample(baseband_waveform_pd(1+(2*ringing_length):end-(2*ringing_length)), oversampling_rate);
 figure(4)
 plot(baseband_symbols_pd, 'ro')
+plot(symbol_stream, 'ko')
 
 SNR_dB_with_predistortion = Measure_SNR(baseband_symbols_pd, symbol_stream);
 EVM_percent_with_predistortion = 100*sqrt(1/power(10,SNR_dB_with_predistortion/10));

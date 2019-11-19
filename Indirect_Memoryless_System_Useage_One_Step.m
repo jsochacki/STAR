@@ -9,6 +9,7 @@ POLYNOMIAL_ORDER = 5;
 PREDISTORTER_BACKOFF = 1;
 CFR = 0;
 CFR_Iterations = 100;
+PAPR_Reduction = 1;
 
 %Generate temporary PA coefficients
 x = [1 2 3 4 5 6 7 8 9 10];
@@ -37,8 +38,7 @@ filter_h = filter_h ./ sqrt(sum(power(filter_h, 2)));
 [Complex_Alphabet Binary_Alphabet Decimal_Alphabet BITS_PER_WORD] = dvbs2_Constellations(MODCOD);
 symbol_stream = randsrc(1, SYMBOLS_PER_SLOT, Complex_Alphabet);
 oversampled_symbol_stream = upsample(symbol_stream, oversampling_rate);
-tx_waveform = cconv(oversampled_symbol_stream, filter_h);
-base_signal_PAPR_dB = PAPR_dB(tx_waveform, []);
+tx_waveform = cconv(oversampled_symbol_stream, filter_h);;
 
 %Set output back off and generate waveform at the output of the pa
 [REQUIRED_SIGNAL_GAIN SYSTEM_POWER_GAIN_dB] = set_OBO(tx_waveform, OBO_FROM_P1DB, pa_coefficients, 0.01);
@@ -83,18 +83,20 @@ SNR_dB_without_predistortion = Measure_SNR(baseband_symbols, symbol_stream);
 EVM_percent_without_predistortion = 100*sqrt(1/power(10,SNR_dB_without_predistortion/10));
 
 %Now Apply Ideal Predistortion
-pd_coefficients = Least_Squares_Memoryless_Odd_Polynomial_Solution(tx_signal, tx_waveform_at_pa_output / power(10, SYSTEM_POWER_GAIN_dB/20), POLYNOMIAL_ORDER);
-%pd_coefficients = Least_Squares_Memoryless_Odd_Polynomial_Solution(tx_signal, tx_waveform_at_pa_output, POLYNOMIAL_ORDER);
-pd_tx_waveform = Memoryless_Polynomial_Amplifier(tx_signal*power(10, -PREDISTORTER_BACKOFF/20), pd_coefficients);
-%pd_tx_waveform = Memoryless_Polynomial_Amplifier(tx_signal, pd_coefficients);
 if CFR
-   pre_CFR_PAPR = PAPR_dB(pd_tx_waveform, []);
-   [pd_tx_waveform_post_cfr post_CFR_PAPR] = serial_peak_cancellation(pd_tx_waveform, filter_h, base_signal_PAPR_dB, CFR_Iterations);
-   tx_waveform_at_pa_output_pd = Memoryless_Polynomial_Amplifier(pd_tx_waveform_post_cfr, pa_coefficients);
+   pre_CFR_PAPR = PAPR_dB(tx_signal, []);
+   [tx_signal_pre_pd post_CFR_PAPR] = serial_peak_cancellation(tx_signal, filter_h, pre_CFR_PAPR - PAPR_Reduction, CFR_Iterations);
 else
-   tx_waveform_at_pa_output_pd = Memoryless_Polynomial_Amplifier(pd_tx_waveform, pa_coefficients);
+   tx_signal_pre_pd = tx_signal;
 end
+tx_waveform_at_pa_output_pre_pd = Memoryless_Polynomial_Amplifier(tx_signal_pre_pd, pa_coefficients);
+
+pd_coefficients = Least_Squares_Memoryless_Odd_Polynomial_Solution(tx_signal_pre_pd, tx_waveform_at_pa_output_pre_pd / power(10, SYSTEM_POWER_GAIN_dB/20), POLYNOMIAL_ORDER);
+pd_tx_waveform = Memoryless_Polynomial_Amplifier(tx_signal_pre_pd*power(10, -PREDISTORTER_BACKOFF/20), pd_coefficients);
+tx_waveform_at_pa_output_pd = Memoryless_Polynomial_Amplifier(pd_tx_waveform, pa_coefficients);
+   
 tx_power_at_pa_output_pd = 10*log10((tx_waveform_at_pa_output_pd*tx_waveform_at_pa_output_pd')/(length(tx_waveform_at_pa_output_pd)*50*0.001));
+
 figure(1)
 plot(10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
      10*log10(((abs(tx_waveform_at_pa_output_pd)).^2)/(length(tx_waveform_at_pa_output_pd)*50*0.001)), 'r.')
@@ -119,6 +121,7 @@ baseband_symbols_pd = downsample(baseband_waveform_pd, oversampling_rate);
 baseband_symbols_pd = baseband_symbols_pd(1+(filter_length_in_symbols):end-(filter_length_in_symbols));
 figure(4)
 plot(baseband_symbols_pd, 'ro')
+plot(symbol_stream, 'ko')
 
 SNR_dB_with_predistortion = Measure_SNR(baseband_symbols_pd, symbol_stream);
 EVM_percent_with_predistortion = 100*sqrt(1/power(10,SNR_dB_with_predistortion/10));
