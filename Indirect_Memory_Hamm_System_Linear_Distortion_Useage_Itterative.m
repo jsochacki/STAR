@@ -54,24 +54,6 @@ tx_waveform_at_pa_output = Memoryless_Polynomial_Amplifier(tx_signal_wld, pa_coe
 %tx_waveform_at_pa_output = Memoryless_Polynomial_Amplifier(tx_signal*power(10, -PREDISTORTER_BACKOFF/10), pa_coefficients);
 tx_power_at_pa_output_nopd = 10*log10((tx_waveform_at_pa_output*tx_waveform_at_pa_output')/(length(tx_waveform_at_pa_output)*50*0.001));
 
-figure(1)
-plot([10*log10(((min(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001)) 10*log10(((max(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001))], ...
-     SYSTEM_POWER_GAIN_dB+[10*log10(((min(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001)) 10*log10(((max(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001))], 'k')
-hold on, grid on
-plot(10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
-     10*log10(((abs(tx_waveform_at_pa_output)).^2)/(length(tx_signal)*50*0.001)), 'b.')
-
-figure(2)
-plot([10*log10(((min(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001)) 10*log10(((max(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001))], ...
-     SYSTEM_POWER_GAIN_dB*[1 1], 'k')
-hold on, grid on
-plot(10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
-     10*log10(((abs(tx_waveform_at_pa_output)).^2)/(length(tx_signal)*50*0.001)) - 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), 'b.')
-  
-figure(3)
-plot(20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_signal, length(tx_signal)))))))
-hold on
-plot(20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa_output, length(tx_signal)))))))
 
 %Add AWGN
 tx_waveform_at_pa_output_normalized = tx_waveform_at_pa_output ./ sqrt(oversampling_rate * ((tx_waveform_at_pa_output * tx_waveform_at_pa_output') / length(tx_waveform_at_pa_output)));
@@ -81,9 +63,7 @@ rx_signal = tx_waveform_at_pa_output_normalized + n0;
 %Receive Filtering
 baseband_waveform = cconv(rx_signal, fliplr(filter_h));
 baseband_symbols = downsample(baseband_waveform(1+((2*ringing_length)):end-((2*ringing_length))), oversampling_rate);
-figure(4)
-plot(baseband_symbols, 'bo')
-hold on, grid on
+
 
 SNR_dB_without_predistortion = Measure_SNR(baseband_symbols, symbol_stream);
 EVM_percent_without_predistortion = 100*sqrt(1/power(10,SNR_dB_without_predistortion/10));
@@ -104,7 +84,74 @@ tx_waveform_at_pa_output_pd = Memoryless_Polynomial_Amplifier(training_signal_wl
 [linear_coefficients X] = Least_Squares_Linear_Solution(training_signal, tx_waveform_at_pa_output_pd / power(10, SYSTEM_POWER_GAIN_dB/20), Q);
 linear_coefficients = fliplr(linear_coefficients);
 
-for n = 1:1:3
+
+%Get initial memoryless pd coefficients
+pd_coefficients = Hammerstein_Memoryless_Odd_Polynomial_Solution(training_signal, tx_waveform_at_pa_output_pd / power(10, SYSTEM_POWER_GAIN_dB/20), POLYNOMIAL_ORDER, linear_coefficients);
+
+inverted_estimate = Memoryless_Polynomial_Amplifier(tx_waveform_at_pa_output_pd / power(10, SYSTEM_POWER_GAIN_dB/20), pd_coefficients);
+[linear_coefficients X] = Least_Squares_Linear_Solution(training_signal, inverted_estimate, Q);
+linear_coefficients = fliplr(linear_coefficients);
+
+%Apply Hammerstein predistortion
+pd_signal_pre_lti = Memoryless_Polynomial_Amplifier(tx_signal*power(10, -PREDISTORTER_BACKOFF/20), pd_coefficients);
+%pd_tx_waveform = matrix_convolve(pd_signal_pre_lti, linear_coefficients);
+pd_tx_waveform = cconv(pd_signal_pre_lti, linear_coefficients);
+pd_tx_waveform = pd_tx_waveform(1+(half_length_Q):end-(half_length_Q));
+
+%Apply Amplifier
+pd_tx_signal_wld = cconv(pd_tx_waveform, h);
+pd_tx_signal_wld = pd_tx_signal_wld((1+half_length_h):1:(end-half_length_h));
+tx_waveform_at_pa_output_pd = Memoryless_Polynomial_Amplifier(pd_tx_signal_wld, pa_coefficients);
+training_signal = pd_tx_waveform;
+
+tx_power_at_pa_output_pd = 10*log10((tx_waveform_at_pa_output_pd*tx_waveform_at_pa_output_pd')/(length(tx_waveform_at_pa_output_pd)*50*0.001));
+
+
+%Add AWGN
+%Have to normailze to symbol power here before adding noise so you don't
+%ruin the mssp off the rx signal in the SNR measurement
+tx_waveform_at_pa_output_pd_normalized = tx_waveform_at_pa_output_pd ./ sqrt(oversampling_rate * ((tx_waveform_at_pa_output_pd * tx_waveform_at_pa_output_pd') / length(tx_waveform_at_pa_output_pd)));
+[n0, sigma] = generate_awgn_from_EsNo(tx_waveform_at_pa_output_pd_normalized, 0,  1000, oversampling_rate);
+rx_signal_pd = tx_waveform_at_pa_output_pd_normalized + n0;
+
+%Receive Filtering
+baseband_waveform_pd = cconv(rx_signal_pd, fliplr(filter_h));
+baseband_symbols_pd = downsample(baseband_waveform_pd(1+((2*ringing_length)):end-((2*ringing_length))), oversampling_rate);
+
+
+SNR_dB_with_predistortion = Measure_SNR(baseband_symbols_pd, symbol_stream);
+EVM_percent_with_predistortion = 100*sqrt(1/power(10,SNR_dB_with_predistortion/10));
+
+%plot
+[gain_figure gain_axis] = create_gain_plot([], [], ...
+                 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
+                 10*log10(((abs(tx_waveform_at_pa_output)).^2)/(length(tx_waveform_at_pa_output)*50*0.001)) - 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
+                 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
+                 10*log10(((abs(tx_waveform_at_pa_output_pd)).^2)/(length(tx_waveform_at_pa_output_pd)*50*0.001)) - 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
+                 [], ...
+                 [], ...
+                 -75, -50, 24, 33);
+
+[psd_figure psd_axis] = create_psd_plot([], [], ...
+                linspace(-1/2, 1/2, length(tx_signal)), ...
+                20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_signal, length(tx_signal)))))), ...
+                linspace(-1/2, 1/2, length(tx_waveform_at_pa_output)), ...
+                20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa_output, length(tx_waveform_at_pa_output)))))), ...
+                linspace(-1/2, 1/2, length(tx_waveform_at_pa_output_pd)), ...
+                20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa_output_pd, length(tx_waveform_at_pa_output_pd)))))), ...
+                oversampling_rate, ...
+                10, ...
+                80);
+
+[constellation_figure constellation_axis] = create_consteallation_plot([], [], ...
+                           real(baseband_symbols), imag(baseband_symbols), ...
+                           real(baseband_symbols_pd), imag(baseband_symbols_pd), ...
+                           [], [], ...
+                           SNR_dB_without_predistortion, EVM_percent_without_predistortion, ...
+                           SNR_dB_with_predistortion, EVM_percent_with_predistortion, ...
+                           -1.5, 1.5, -1.5, 1.5);
+
+for n = 1:1:4
 
    %Get initial memoryless pd coefficients
    pd_coefficients = Hammerstein_Memoryless_Odd_Polynomial_Solution(training_signal, tx_waveform_at_pa_output_pd / power(10, SYSTEM_POWER_GAIN_dB/20), POLYNOMIAL_ORDER, linear_coefficients);
@@ -127,16 +174,6 @@ for n = 1:1:3
 
    tx_power_at_pa_output_pd = 10*log10((tx_waveform_at_pa_output_pd*tx_waveform_at_pa_output_pd')/(length(tx_waveform_at_pa_output_pd)*50*0.001));
 end
-figure(1)
-plot(10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
-     10*log10(((abs(tx_waveform_at_pa_output_pd)).^2)/(length(tx_signal)*50*0.001)), 'r.')
-
-figure(2)
-plot(10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
-     10*log10(((abs(tx_waveform_at_pa_output_pd)).^2)/(length(tx_signal)*50*0.001)) - 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), 'r.')
-  
-figure(3)
-plot(20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa_output_pd, length(tx_signal)))))))
 
 %Add AWGN
 %Have to normailze to symbol power here before adding noise so you don't
@@ -148,9 +185,36 @@ rx_signal_pd = tx_waveform_at_pa_output_pd_normalized + n0;
 %Receive Filtering
 baseband_waveform_pd = cconv(rx_signal_pd, fliplr(filter_h));
 baseband_symbols_pd = downsample(baseband_waveform_pd(1+((2*ringing_length)):end-((2*ringing_length))), oversampling_rate);
-figure(4)
-plot(baseband_symbols_pd, 'ro')
-plot(symbol_stream, 'ko')
+
 
 SNR_dB_with_predistortion = Measure_SNR(baseband_symbols_pd, symbol_stream);
 EVM_percent_with_predistortion = 100*sqrt(1/power(10,SNR_dB_with_predistortion/10));
+
+%plots
+[gain_figure gain_axis] = create_gain_plot(gain_figure, gain_axis, ...
+                 [], ...
+                 [], ...
+                 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
+                 10*log10(((abs(tx_waveform_at_pa_output_pd)).^2)/(length(tx_waveform_at_pa_output_pd)*50*0.001)) - 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
+                 [10*log10(((min(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001)) 10*log10(((max(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001))], ...
+                 SYSTEM_POWER_GAIN_dB*[1 1], ...
+                 -75, -50, 24, 33);
+
+[psd_figure psd_axis] = create_psd_plot(psd_figure, psd_axis, ...
+                [], ...
+                [], ...
+                [], ...
+                [], ...
+                linspace(-1/2, 1/2, length(tx_waveform_at_pa_output_pd)), ...
+                20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa_output_pd, length(tx_waveform_at_pa_output_pd)))))), ...
+                oversampling_rate, ...
+                10, ...
+                80);
+
+[constellation_figure constellation_axis] = create_consteallation_plot(constellation_figure, constellation_axis, ...
+                           [], [], ...
+                           real(baseband_symbols_pd), imag(baseband_symbols_pd), ...
+                           real(symbol_stream), imag(symbol_stream), ...
+                           SNR_dB_without_predistortion, EVM_percent_without_predistortion, ...
+                           SNR_dB_with_predistortion, EVM_percent_with_predistortion, ...
+                           -1.5, 1.5, -1.5, 1.5);

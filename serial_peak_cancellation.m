@@ -1,5 +1,8 @@
 function [processed_signal current_PAPR_dB] = serial_peak_cancellation(input_signal, filter_h, target_PAPR_dB, iteration_count)
 
+trn=0;
+if size(input_signal,1) > size(input_signal,2), input_signal=input_signal.';, trn=1;, end;
+
 processed_signal = input_signal;
 impulse = filter_h ./ max(abs(filter_h));
 target_PAPR = power(10, target_PAPR_dB / 10);
@@ -24,7 +27,7 @@ while iteration_count >= iteration
    
    indicies = ((index - impulse_half_length):1:(index + impulse_half_length));
 
-   amplitude_scaling = current_peak_magnitude - current_target_peak_power;
+   amplitude_scaling = current_peak_magnitude - current_target_peak_voltage;
    phase_scaling = angle(processed_signal(index));
    
    correction_pulse = -(impulse .* amplitude_scaling .* exp(j * phase_scaling));
@@ -44,5 +47,7 @@ while iteration_count >= iteration
 end
 
 current_PAPR_dB = PAPR_dB(processed_signal, []);
+
+if trn, processed_signal = processed_signal.';, end;
    
 end

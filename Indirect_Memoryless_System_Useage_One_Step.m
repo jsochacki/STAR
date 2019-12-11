@@ -47,25 +47,6 @@ tx_waveform_at_pa_output = Memoryless_Polynomial_Amplifier(tx_signal, pa_coeffic
 %tx_waveform_at_pa_output = Memoryless_Polynomial_Amplifier(tx_signal*power(10, -PREDISTORTER_BACKOFF/10), pa_coefficients);
 tx_power_at_pa_output_nopd = 10*log10((tx_waveform_at_pa_output*tx_waveform_at_pa_output')/(length(tx_waveform_at_pa_output)*50*0.001));
 
-figure(1)
-plot([10*log10(((min(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001)) 10*log10(((max(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001))], ...
-     SYSTEM_POWER_GAIN_dB+[10*log10(((min(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001)) 10*log10(((max(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001))], 'k')
-hold on, grid on
-plot(10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
-     10*log10(((abs(tx_waveform_at_pa_output)).^2)/(length(tx_waveform_at_pa_output)*50*0.001)), 'b.')
-
-figure(2)
-plot([10*log10(((min(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001)) 10*log10(((max(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001))], ...
-     SYSTEM_POWER_GAIN_dB*[1 1], 'k')
-hold on, grid on
-plot(10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
-     10*log10(((abs(tx_waveform_at_pa_output)).^2)/(length(tx_waveform_at_pa_output)*50*0.001)) - 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), 'b.')
-  
-figure(3)
-plot(20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_signal, length(tx_signal)))))))
-hold on
-plot(20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa_output, length(tx_waveform_at_pa_output)))))))
-
 %Add AWGN
 tx_waveform_at_pa_output_normalized = tx_waveform_at_pa_output ./ sqrt(oversampling_rate * ((tx_waveform_at_pa_output * tx_waveform_at_pa_output') / length(tx_waveform_at_pa_output)));
 [n0, sigma] = generate_awgn_from_EsNo(tx_waveform_at_pa_output_normalized, 0,  1000, oversampling_rate);
@@ -75,9 +56,7 @@ rx_signal = tx_waveform_at_pa_output_normalized + n0;
 baseband_waveform = cconv(rx_signal, fliplr(filter_h));
 baseband_symbols = downsample(baseband_waveform, oversampling_rate);
 baseband_symbols = baseband_symbols(1+(filter_length_in_symbols):end-(filter_length_in_symbols));
-figure(4)
-plot(baseband_symbols, 'bo')
-hold on, grid on
+
 
 SNR_dB_without_predistortion = Measure_SNR(baseband_symbols, symbol_stream);
 EVM_percent_without_predistortion = 100*sqrt(1/power(10,SNR_dB_without_predistortion/10));
@@ -97,17 +76,6 @@ tx_waveform_at_pa_output_pd = Memoryless_Polynomial_Amplifier(pd_tx_waveform, pa
    
 tx_power_at_pa_output_pd = 10*log10((tx_waveform_at_pa_output_pd*tx_waveform_at_pa_output_pd')/(length(tx_waveform_at_pa_output_pd)*50*0.001));
 
-figure(1)
-plot(10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
-     10*log10(((abs(tx_waveform_at_pa_output_pd)).^2)/(length(tx_waveform_at_pa_output_pd)*50*0.001)), 'r.')
-
-figure(2)
-plot(10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
-     10*log10(((abs(tx_waveform_at_pa_output_pd)).^2)/(length(tx_waveform_at_pa_output_pd)*50*0.001)) - 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), 'r.')
-  
-figure(3)
-plot(20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa_output_pd, length(tx_waveform_at_pa_output_pd)))))))
-
 %Add AWGN
 %Have to normailze to symbol power here before adding noise so you don't
 %ruin the mssp off the rx signal in the SNR measurement
@@ -119,9 +87,36 @@ rx_signal_pd = tx_waveform_at_pa_output_pd_normalized + n0;
 baseband_waveform_pd = cconv(rx_signal_pd, fliplr(filter_h));
 baseband_symbols_pd = downsample(baseband_waveform_pd, oversampling_rate);
 baseband_symbols_pd = baseband_symbols_pd(1+(filter_length_in_symbols):end-(filter_length_in_symbols));
-figure(4)
-plot(baseband_symbols_pd, 'ro')
-plot(symbol_stream, 'ko')
+
 
 SNR_dB_with_predistortion = Measure_SNR(baseband_symbols_pd, symbol_stream);
 EVM_percent_with_predistortion = 100*sqrt(1/power(10,SNR_dB_with_predistortion/10));
+
+%plots
+[gain_figure gain_axis] = create_gain_plot([], [], ...
+                 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
+                 10*log10(((abs(tx_waveform_at_pa_output)).^2)/(length(tx_waveform_at_pa_output)*50*0.001)) - 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
+                 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
+                 10*log10(((abs(tx_waveform_at_pa_output_pd)).^2)/(length(tx_waveform_at_pa_output_pd)*50*0.001)) - 10*log10(((abs(tx_signal)).^2)/(length(tx_signal)*50*0.001)), ...
+                 [10*log10(((min(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001)) 10*log10(((max(abs(tx_signal)).^2))/(length(tx_signal)*50*0.001))], ...
+                 SYSTEM_POWER_GAIN_dB*[1 1], ...
+                 -75, -50, 23, 31);
+
+[psd_figure psd_axis] = create_psd_plot([], [], ...
+                linspace(-1/2, 1/2, length(tx_signal)), ...
+                20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_signal, length(tx_signal)))))), ...
+                linspace(-1/2, 1/2, length(tx_waveform_at_pa_output)), ...
+                20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa_output, length(tx_waveform_at_pa_output)))))), ...
+                linspace(-1/2, 1/2, length(tx_waveform_at_pa_output_pd)), ...
+                20*log10(filtfilt(1./(100*ones(1,100)),1,abs(fftshift(fft(tx_waveform_at_pa_output_pd, length(tx_waveform_at_pa_output_pd)))))), ...
+                oversampling_rate, ...
+                10, ...
+                80);
+
+[constellation_figure constellation_axis] = create_consteallation_plot([], [], ...
+                           real(baseband_symbols), imag(baseband_symbols), ...
+                           real(baseband_symbols_pd), imag(baseband_symbols_pd), ...
+                           real(symbol_stream), imag(symbol_stream), ...
+                           SNR_dB_without_predistortion, EVM_percent_without_predistortion, ...
+                           SNR_dB_with_predistortion, EVM_percent_with_predistortion, ...
+                           -1.5, 1.5, -1.5, 1.5);
